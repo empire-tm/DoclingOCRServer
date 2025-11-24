@@ -1,0 +1,42 @@
+services:
+  docling-ocr-server:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./temp_storage:/tmp/docling_storage
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - TEMP_STORAGE_PATH=/tmp/docling_storage
+      - TTL_HOURS=24
+      - MAX_FILE_SIZE_MB=50
+      - TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+      - ACCELERATOR_DEVICE=cpu
+      - NUM_THREADS=4
+    restart: unless-stopped
+
+  # GPU-enabled version (uncomment to use NVIDIA GPU)
+  # docling-ocr-server-gpu:
+  #   build: .
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ./temp_storage:/tmp/docling_storage
+  #   environment:
+  #     - HOST=0.0.0.0
+  #     - PORT=8000
+  #     - TEMP_STORAGE_PATH=/tmp/docling_storage
+  #     - TTL_HOURS=24
+  #     - MAX_FILE_SIZE_MB=50
+  #     - TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+  #     - ACCELERATOR_DEVICE=cuda
+  #     - NUM_THREADS=8
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   restart: unless-stopped

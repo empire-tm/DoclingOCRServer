@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM nvidia/cuda:12.8-runtime-ubuntu22.04
 
 # Set working directory
 WORKDIR /app

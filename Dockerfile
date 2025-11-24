@@ -1,10 +1,11 @@
 FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
 
-# Set working directory
-WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
+# Install python, pip, system libs, tesseract, poppler
 RUN apt-get update && apt-get install -y \
+    python3 python3-pip python3-venv python3-dev \
+    build-essential \
     tesseract-ocr \
     tesseract-ocr-rus \
     tesseract-ocr-eng \
@@ -13,12 +14,18 @@ RUN apt-get update && apt-get install -y \
     libpoppler-cpp-dev \
     libgl1 \
     libglib2.0-0 \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Ensure pip works
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+WORKDIR /app
+
+# First copy only requirements to improve caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python deps
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code

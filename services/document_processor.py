@@ -4,10 +4,20 @@ from pathlib import Path
 from typing import BinaryIO
 import logging
 import os
-from docling.document_converter import DocumentConverter, PdfFormatOption
+import re
+import uuid
+from docling.document_converter import (
+    DocumentConverter,
+    PdfFormatOption,
+    WordFormatOption,
+    PowerpointFormatOption,
+    ExcelFormatOption,
+    ImageFormatOption,
+)
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
     PdfPipelineOptions,
+    PaginatedPipelineOptions,
     TesseractCliOcrOptions,
     AcceleratorOptions,
 )
@@ -22,7 +32,16 @@ logger = logging.getLogger(__name__)
 class DocumentProcessor:
     def __init__(self):
         logger.info("🔧 Initializing DocumentProcessor with Tesseract CLI OCR")
+        logger.info(f"⚙️  Accelerator: {settings.accelerator_device.value.upper()}, Threads: {settings.num_threads}")
+        logger.info("✅ DocumentProcessor initialized for all formats (PDF, DOCX, PPTX, XLSX, Images)")
 
+    def _create_converter(self, force_ocr: bool = False) -> DocumentConverter:
+        """
+        Create DocumentConverter with specified OCR settings
+
+        Args:
+            force_ocr: If True, forces OCR on entire page/document
+        """
         # Map config accelerator device to Docling's enum
         device_map = {
             AcceleratorDevice.CPU: DoclingAcceleratorDevice.CPU,
@@ -31,12 +50,10 @@ class DocumentProcessor:
         }
         docling_device = device_map[settings.accelerator_device]
 
-        logger.info(f"⚙️  Accelerator: {settings.accelerator_device.value.upper()}, Threads: {settings.num_threads}")
-
         # Configure Tesseract CLI OCR with Russian and English languages
-        # Using TesseractCliOcrOptions which uses tesseract command-line tool
         ocr_options = TesseractCliOcrOptions(
-            lang=["rus", "eng"]
+            lang=["rus", "eng"],
+            force_full_page_ocr=force_ocr
         )
 
         # Configure accelerator options for CPU/GPU processing
@@ -45,32 +62,47 @@ class DocumentProcessor:
             device=docling_device
         )
 
-        # Configure pipeline with OCR and image extraction options
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = True
-        pipeline_options.ocr_options = ocr_options
-        pipeline_options.accelerator_options = accelerator_options
+        # Configure PDF pipeline with OCR and image extraction options
+        pdf_pipeline_options = PdfPipelineOptions()
+        pdf_pipeline_options.do_ocr = True
+        pdf_pipeline_options.ocr_options = ocr_options
+        pdf_pipeline_options.accelerator_options = accelerator_options
+        pdf_pipeline_options.generate_picture_images = True
+        pdf_pipeline_options.images_scale = 2.0
 
-        # Enable image generation for export
-        pipeline_options.generate_picture_images = True
-        pipeline_options.images_scale = 2.0  # Higher resolution images
+        # Configure pipeline for Office documents
+        office_pipeline_options = PaginatedPipelineOptions()
+        office_pipeline_options.generate_page_images = force_ocr  # Enable for force_ocr
+        office_pipeline_options.generate_picture_images = True
+        office_pipeline_options.images_scale = 2.0
 
-        # Initialize DocumentConverter with configuration
-        self.converter = DocumentConverter(
+        # Initialize DocumentConverter
+        return DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(
-                    pipeline_options=pipeline_options,
+                    pipeline_options=pdf_pipeline_options,
                     backend=PyPdfiumDocumentBackend
-                )
+                ),
+                InputFormat.DOCX: WordFormatOption(
+                    pipeline_options=office_pipeline_options
+                ),
+                InputFormat.PPTX: PowerpointFormatOption(
+                    pipeline_options=office_pipeline_options
+                ),
+                InputFormat.XLSX: ExcelFormatOption(
+                    pipeline_options=office_pipeline_options
+                ),
+                InputFormat.IMAGE: ImageFormatOption(
+                    pipeline_options=pdf_pipeline_options
+                ),
             }
         )
-
-        logger.info(f"✅ DocumentProcessor initialized with Tesseract CLI (rus+eng), {settings.accelerator_device.value.upper()}, and image extraction")
 
     async def process_document(
         self,
         file_path: Path,
-        output_dir: Path
+        output_dir: Path,
+        force_ocr: bool = False
     ) -> tuple[Path, Path]:
         """
         Process document and return paths to markdown and images directory
@@ -78,6 +110,7 @@ class DocumentProcessor:
         Args:
             file_path: Path to input document
             output_dir: Directory for output files
+            force_ocr: If True, forces OCR on entire page/document
 
         Returns:
             Tuple of (markdown_path, images_dir_path)
@@ -86,10 +119,16 @@ class DocumentProcessor:
             logger.info(f"📄 Starting document processing: {file_path.name}")
             logger.info(f"📊 File size: {file_path.stat().st_size / 1024 / 1024:.2f} MB")
 
+            if force_ocr:
+                logger.info("🔍 Force OCR enabled for this document")
+
+            # Create converter with specified OCR settings
+            converter = self._create_converter(force_ocr=force_ocr)
+
             # Run conversion in thread pool to avoid blocking
             logger.info("🔄 Running Docling converter with Tesseract OCR (rus+eng)...")
             result = await asyncio.to_thread(
-                self.converter.convert,
+                converter.convert,
                 str(file_path)
             )
 
@@ -121,10 +160,20 @@ class DocumentProcessor:
                 # Create images directory if it doesn't exist
                 images_dir.mkdir(exist_ok=True)
 
-                # Move all files from document_artifacts to images
+                # Create mapping of old filenames to new GUID-based filenames
+                filename_mapping = {}
+
+                # Move all files from document_artifacts to images with new GUID names
                 for file in artifacts_dir.iterdir():
                     if file.is_file():
-                        shutil.move(str(file), str(images_dir / file.name))
+                        # Generate new GUID-based filename
+                        new_name = f"{uuid.uuid4()}{file.suffix}"
+                        old_name = file.name
+                        filename_mapping[old_name] = new_name
+
+                        # Move file with new name
+                        shutil.move(str(file), str(images_dir / new_name))
+                        logger.info(f"  📷 Renamed: {old_name} -> {new_name}")
 
                 # Remove empty document_artifacts directory
                 artifacts_dir.rmdir()
@@ -133,20 +182,26 @@ class DocumentProcessor:
                 logger.info("🔧 Fixing image paths in markdown...")
                 markdown_content = markdown_path.read_text(encoding="utf-8")
 
-                # Replace absolute paths and document_artifacts with relative images/
-                import re
-                # Pattern to match image paths with absolute paths or document_artifacts
-                markdown_content = re.sub(
-                    r'!\[(.*?)\]\(.*/document_artifacts/(.*?)\)',
-                    r'![\1](images/\2)',
-                    markdown_content
-                )
-                # Also replace any remaining absolute paths
-                markdown_content = re.sub(
-                    r'!\[(.*?)\]\(/[^)]*?/images/(.*?)\)',
-                    r'![\1](images/\2)',
-                    markdown_content
-                )
+                # Replace image references with new filenames
+                for old_name, new_name in filename_mapping.items():
+                    # Replace paths with document_artifacts
+                    markdown_content = re.sub(
+                        rf'!\[(.*?)\]\(.*/document_artifacts/{re.escape(old_name)}\)',
+                        rf'![\1](images/{new_name})',
+                        markdown_content
+                    )
+                    # Replace paths with just images/
+                    markdown_content = re.sub(
+                        rf'!\[(.*?)\]\(/[^)]*?/images/{re.escape(old_name)}\)',
+                        rf'![\1](images/{new_name})',
+                        markdown_content
+                    )
+                    # Replace relative paths
+                    markdown_content = re.sub(
+                        rf'!\[(.*?)\]\(images/{re.escape(old_name)}\)',
+                        rf'![\1](images/{new_name})',
+                        markdown_content
+                    )
 
                 markdown_path.write_text(markdown_content, encoding="utf-8")
                 logger.info("✅ Image paths fixed in markdown")

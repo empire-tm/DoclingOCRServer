@@ -65,11 +65,23 @@ python main.py
 POST /documents/process
 ```
 
-**Пример запроса:**
+**Параметры:**
+- `file` - файл документа (обязательный)
+- `force_ocr` - принудительный OCR всего документа (необязательный, по умолчанию `false`)
+
+**Пример запроса (стандартная обработка):**
 
 ```bash
 curl -X POST "http://localhost:8000/documents/process" \
   -F "file=@document.pdf"
+```
+
+**Пример запроса (с принудительным OCR):**
+
+```bash
+curl -X POST "http://localhost:8000/documents/process" \
+  -F "file=@document.pdf" \
+  -F "force_ocr=true"
 ```
 
 **Ответ:**
@@ -78,7 +90,7 @@ curl -X POST "http://localhost:8000/documents/process" \
 {
   "task_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "pending",
-  "message": "Document processing started"
+  "message": "Document processing started (with force OCR)"
 }
 ```
 
@@ -128,9 +140,9 @@ curl -O -J "http://localhost:8000/documents/550e8400-e29b-41d4-a716-446655440000
 ```
 task_id.zip
 ├── document.md          # Markdown файл с содержимым документа
-└── images/              # Папка с изображениями
-    ├── image_1.png
-    ├── image_2.jpg
+└── images/              # Папка с изображениями (имена файлов - GUID)
+    ├── a1b2c3d4-e5f6-7890-abcd-ef1234567890.png
+    ├── b2c3d4e5-f6a7-8901-bcde-f12345678901.jpg
     └── ...
 ```
 
@@ -154,6 +166,30 @@ MAX_FILE_SIZE_MB=50
 ACCELERATOR_DEVICE=cpu  # cpu, cuda, или mps (Apple Metal)
 NUM_THREADS=4           # Количество потоков для CPU
 ```
+
+### Принудительный OCR для отдельных файлов
+
+Если у вас есть отсканированные документы или документы, где стандартная обработка пропускает контент, используйте параметр `force_ocr=true` в запросе:
+
+```bash
+curl -X POST "http://localhost:8000/documents/process" \
+  -F "file=@scanned_document.pdf" \
+  -F "force_ocr=true"
+```
+
+**Когда использовать `force_ocr=true`:**
+- ✅ Отсканированные документы (сканы бумаги)
+- ✅ PDF с изображениями вместо текста
+- ✅ Документы с плохо распознаваемым текстовым слоем
+- ✅ Когда стандартная обработка пропускает изображения
+- ✅ DOCX, PPTX, XLSX с встроенными изображениями
+
+**Как работает для разных форматов:**
+- **PDF** - Применяется полностраничный OCR (игнорирует текстовый слой)
+- **DOCX, PPTX, XLSX** - Включается извлечение всех изображений на страницах
+- **JPG, PNG** - Применяется OCR к изображениям
+
+**Примечание:** Режим `force_ocr` медленнее стандартной обработки, так как применяет OCR ко всему документу.
 
 ### Поддержка GPU
 
@@ -189,7 +225,7 @@ NUM_THREADS=8
 import requests
 import time
 
-# Загрузка документа
+# Загрузка документа (стандартная обработка)
 with open("document.pdf", "rb") as f:
     response = requests.post(
         "http://localhost:8000/documents/process",
@@ -198,6 +234,15 @@ with open("document.pdf", "rb") as f:
 
 task_id = response.json()["task_id"]
 print(f"Task ID: {task_id}")
+
+# Или с принудительным OCR для проблемных документов
+# with open("scanned_document.pdf", "rb") as f:
+#     response = requests.post(
+#         "http://localhost:8000/documents/process",
+#         files={"file": f},
+#         data={"force_ocr": "true"}
+#     )
+#     task_id = response.json()["task_id"]
 
 # Проверка статуса
 while True:

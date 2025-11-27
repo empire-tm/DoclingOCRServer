@@ -5,8 +5,9 @@ import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.responses import FileResponse
+from typing import Optional
 
 from config import settings
 from models import TaskResponse, TaskStatusResponse, TaskStatus
@@ -47,7 +48,7 @@ app = FastAPI(
 )
 
 
-async def process_document_task(task_id: str, file_path: Path):
+async def process_document_task(task_id: str, file_path: Path, force_ocr: bool = False):
     """Background task to process document"""
     try:
         logger.info(f"Processing task {task_id}")
@@ -57,7 +58,7 @@ async def process_document_task(task_id: str, file_path: Path):
         task_dir = storage_manager.get_task_path(task_id)
 
         # Process document
-        await processor.process_document(file_path, task_dir)
+        await processor.process_document(file_path, task_dir, force_ocr=force_ocr)
 
         # Create ZIP archive
         zip_path = storage_manager.get_zip_path(task_id)
@@ -88,12 +89,18 @@ async def process_document_task(task_id: str, file_path: Path):
 @app.post("/documents/process", response_model=TaskResponse)
 async def process_document(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    force_ocr: bool = Form(False)
 ):
     """
     Upload a document for processing
 
     Supported formats: PDF, DOCX, DOC, XLSX, XLS, JPG, PNG
+
+    Parameters:
+    - file: Document file to process
+    - force_ocr: Force OCR on entire page/document (default: false)
+      Use this for scanned documents or when standard processing misses content
 
     Returns task_id for tracking the processing status
     """
@@ -133,13 +140,17 @@ async def process_document(
         logger.error(f"Error saving uploaded file: {e}")
         raise HTTPException(status_code=500, detail="Error saving uploaded file")
 
-    # Add background task
-    background_tasks.add_task(process_document_task, task_id, temp_file)
+    # Add background task with force_ocr parameter
+    background_tasks.add_task(process_document_task, task_id, temp_file, force_ocr)
+
+    message = "Document processing started"
+    if force_ocr:
+        message += " (with force OCR)"
 
     return TaskResponse(
         task_id=task_id,
         status=TaskStatus.PENDING,
-        message="Document processing started"
+        message=message
     )
 
 

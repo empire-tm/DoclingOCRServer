@@ -69,6 +69,11 @@ async def process_document_task(task_id: str, file_path: Path, force_ocr: bool =
             task_dir
         )
 
+        # Clean up task directory after creating ZIP
+        if task_dir.exists():
+            await asyncio.to_thread(shutil.rmtree, task_dir)
+            logger.info(f"Cleaned up task directory: {task_dir}")
+
         # Update status to completed
         await storage_manager.update_task_status(task_id, TaskStatus.COMPLETED)
         logger.info(f"Task {task_id} completed successfully")

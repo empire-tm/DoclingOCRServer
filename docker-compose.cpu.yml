@@ -1,6 +1,7 @@
 services:
   docling-ocr-server:
-    build: .
+    build:
+      dockerfile: Dockerfile.cpu
     ports:
       - "8000:8000"
     volumes:
@@ -12,13 +13,6 @@ services:
       - TTL_HOURS=24
       - MAX_FILE_SIZE_MB=50
       - TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
-      - ACCELERATOR_DEVICE=cuda
+      - ACCELERATOR_DEVICE=cpu
       - NUM_THREADS=4
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     restart: unless-stopped

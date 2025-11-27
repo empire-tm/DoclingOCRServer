@@ -1,5 +1,6 @@
 import asyncio
 import shutil
+import subprocess
 from pathlib import Path
 from typing import BinaryIO
 import logging
@@ -55,16 +56,19 @@ class DocumentProcessor:
         )
 
         # Configure PDF pipeline with OCR and image extraction options
+        # do_ocr=True enables OCR for text extraction when needed
+        # generate_picture_images=True extracts embedded images from document
+        # generate_page_images=False prevents converting entire pages to images
         pdf_pipeline_options = PdfPipelineOptions()
         pdf_pipeline_options.do_ocr = True
         pdf_pipeline_options.ocr_options = ocr_options
         pdf_pipeline_options.accelerator_options = accelerator_options
-        pdf_pipeline_options.generate_picture_images = True
+        pdf_pipeline_options.generate_picture_images = True  # Extract embedded images
         pdf_pipeline_options.images_scale = 2.0
 
         # Configure pipeline for Office documents
         office_pipeline_options = PaginatedPipelineOptions()
-        office_pipeline_options.generate_picture_images = True
+        office_pipeline_options.generate_picture_images = True  # Extract embedded images
         office_pipeline_options.images_scale = 2.0
 
         # Initialize DocumentConverter with configuration for all formats
@@ -89,7 +93,8 @@ class DocumentProcessor:
             }
         )
 
-        # Create force_ocr converter for when needed
+        # Create force_ocr converter for when needed (scanned documents)
+        # force_full_page_ocr=True forces OCR on entire page even if text is detected
         force_ocr_options = TesseractCliOcrOptions(
             lang=["rus", "eng"],
             force_full_page_ocr=True
@@ -99,12 +104,11 @@ class DocumentProcessor:
         force_pdf_pipeline_options.do_ocr = True
         force_pdf_pipeline_options.ocr_options = force_ocr_options
         force_pdf_pipeline_options.accelerator_options = accelerator_options
-        force_pdf_pipeline_options.generate_picture_images = True
+        force_pdf_pipeline_options.generate_picture_images = True  # Extract embedded images
         force_pdf_pipeline_options.images_scale = 2.0
 
         force_office_pipeline_options = PaginatedPipelineOptions()
-        force_office_pipeline_options.generate_page_images = True
-        force_office_pipeline_options.generate_picture_images = True
+        force_office_pipeline_options.generate_picture_images = True  # Extract embedded images
         force_office_pipeline_options.images_scale = 2.0
 
         self.force_ocr_converter = DocumentConverter(
@@ -130,6 +134,61 @@ class DocumentProcessor:
 
         logger.info("✅ DocumentProcessor initialized for all formats (PDF, DOCX, PPTX, XLSX, Images)")
 
+    async def _convert_legacy_office_format(self, file_path: Path, target_format: str) -> Path:
+        """
+        Convert legacy Office formats (.doc, .xls) to modern formats using LibreOffice
+
+        Args:
+            file_path: Path to legacy office file (.doc or .xls)
+            target_format: Target format ('docx' or 'xlsx')
+
+        Returns:
+            Path to converted file
+        """
+        try:
+            source_ext = file_path.suffix.lower()
+            logger.info(f"🔄 Converting {file_path.name} from {source_ext} to .{target_format}...")
+
+            # Output directory for converted file
+            output_dir = file_path.parent
+
+            # Run LibreOffice in headless mode to convert
+            cmd = [
+                "libreoffice",
+                "--headless",
+                "--convert-to", target_format,
+                "--outdir", str(output_dir),
+                str(file_path)
+            ]
+
+            result = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60  # 60 seconds timeout
+            )
+
+            if result.returncode != 0:
+                logger.error(f"LibreOffice conversion failed: {result.stderr}")
+                raise RuntimeError(f"Failed to convert {source_ext} to .{target_format}: {result.stderr}")
+
+            # Determine output file path
+            converted_path = file_path.with_suffix(f".{target_format}")
+
+            if not converted_path.exists():
+                raise RuntimeError(f"Converted file not found: {converted_path}")
+
+            logger.info(f"✅ Successfully converted to {converted_path.name}")
+            return converted_path
+
+        except subprocess.TimeoutExpired:
+            logger.error("LibreOffice conversion timed out")
+            raise RuntimeError("Document conversion timed out (60s limit)")
+        except Exception as e:
+            logger.error(f"Error converting legacy Office format: {e}")
+            raise
+
     async def process_document(
         self,
         file_path: Path,
@@ -147,9 +206,19 @@ class DocumentProcessor:
         Returns:
             Tuple of (markdown_path, images_dir_path)
         """
+        converted_file = None
         try:
             logger.info(f"📄 Starting document processing: {file_path.name}")
             logger.info(f"📊 File size: {file_path.stat().st_size / 1024 / 1024:.2f} MB")
+
+            # Check if file is legacy Office format and needs conversion
+            file_suffix = file_path.suffix.lower()
+            if file_suffix == ".doc":
+                converted_file = await self._convert_legacy_office_format(file_path, "docx")
+                file_path = converted_file
+            elif file_suffix == ".xls":
+                converted_file = await self._convert_legacy_office_format(file_path, "xlsx")
+                file_path = converted_file
 
             if force_ocr:
                 logger.info("🔍 Force OCR enabled for this document")
@@ -267,6 +336,14 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"❌ Error processing document: {e}", exc_info=True)
             raise
+        finally:
+            # Clean up converted file if it was created
+            if converted_file and converted_file.exists():
+                try:
+                    converted_file.unlink()
+                    logger.info(f"🧹 Cleaned up temporary converted file: {converted_file.name}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Could not delete temporary converted file: {e}")
 
     async def _extract_images(self, result, images_dir: Path) -> int:
         """Extract and save images from document"""

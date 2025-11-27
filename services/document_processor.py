@@ -32,16 +32,7 @@ logger = logging.getLogger(__name__)
 class DocumentProcessor:
     def __init__(self):
         logger.info("🔧 Initializing DocumentProcessor with Tesseract CLI OCR")
-        logger.info(f"⚙️  Accelerator: {settings.accelerator_device.value.upper()}, Threads: {settings.num_threads}")
-        logger.info("✅ DocumentProcessor initialized for all formats (PDF, DOCX, PPTX, XLSX, Images)")
 
-    def _create_converter(self, force_ocr: bool = False) -> DocumentConverter:
-        """
-        Create DocumentConverter with specified OCR settings
-
-        Args:
-            force_ocr: If True, forces OCR on entire page/document
-        """
         # Map config accelerator device to Docling's enum
         device_map = {
             AcceleratorDevice.CPU: DoclingAcceleratorDevice.CPU,
@@ -50,10 +41,11 @@ class DocumentProcessor:
         }
         docling_device = device_map[settings.accelerator_device]
 
+        logger.info(f"⚙️  Accelerator: {settings.accelerator_device.value.upper()}, Threads: {settings.num_threads}")
+
         # Configure Tesseract CLI OCR with Russian and English languages
         ocr_options = TesseractCliOcrOptions(
-            lang=["rus", "eng"],
-            force_full_page_ocr=force_ocr
+            lang=["rus", "eng"]
         )
 
         # Configure accelerator options for CPU/GPU processing
@@ -72,12 +64,11 @@ class DocumentProcessor:
 
         # Configure pipeline for Office documents
         office_pipeline_options = PaginatedPipelineOptions()
-        office_pipeline_options.generate_page_images = force_ocr  # Enable for force_ocr
         office_pipeline_options.generate_picture_images = True
         office_pipeline_options.images_scale = 2.0
 
-        # Initialize DocumentConverter
-        return DocumentConverter(
+        # Initialize DocumentConverter with configuration for all formats
+        self.converter = DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(
                     pipeline_options=pdf_pipeline_options,
@@ -97,6 +88,47 @@ class DocumentProcessor:
                 ),
             }
         )
+
+        # Create force_ocr converter for when needed
+        force_ocr_options = TesseractCliOcrOptions(
+            lang=["rus", "eng"],
+            force_full_page_ocr=True
+        )
+
+        force_pdf_pipeline_options = PdfPipelineOptions()
+        force_pdf_pipeline_options.do_ocr = True
+        force_pdf_pipeline_options.ocr_options = force_ocr_options
+        force_pdf_pipeline_options.accelerator_options = accelerator_options
+        force_pdf_pipeline_options.generate_picture_images = True
+        force_pdf_pipeline_options.images_scale = 2.0
+
+        force_office_pipeline_options = PaginatedPipelineOptions()
+        force_office_pipeline_options.generate_page_images = True
+        force_office_pipeline_options.generate_picture_images = True
+        force_office_pipeline_options.images_scale = 2.0
+
+        self.force_ocr_converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(
+                    pipeline_options=force_pdf_pipeline_options,
+                    backend=PyPdfiumDocumentBackend
+                ),
+                InputFormat.DOCX: WordFormatOption(
+                    pipeline_options=force_office_pipeline_options
+                ),
+                InputFormat.PPTX: PowerpointFormatOption(
+                    pipeline_options=force_office_pipeline_options
+                ),
+                InputFormat.XLSX: ExcelFormatOption(
+                    pipeline_options=force_office_pipeline_options
+                ),
+                InputFormat.IMAGE: ImageFormatOption(
+                    pipeline_options=force_pdf_pipeline_options
+                ),
+            }
+        )
+
+        logger.info("✅ DocumentProcessor initialized for all formats (PDF, DOCX, PPTX, XLSX, Images)")
 
     async def process_document(
         self,
@@ -121,9 +153,9 @@ class DocumentProcessor:
 
             if force_ocr:
                 logger.info("🔍 Force OCR enabled for this document")
-
-            # Create converter with specified OCR settings
-            converter = self._create_converter(force_ocr=force_ocr)
+                converter = self.force_ocr_converter
+            else:
+                converter = self.converter
 
             # Run conversion in thread pool to avoid blocking
             logger.info("🔄 Running Docling converter with Tesseract OCR (rus+eng)...")
@@ -135,6 +167,21 @@ class DocumentProcessor:
             # Log document info
             page_count = len(result.document.pages) if hasattr(result.document, 'pages') else 'unknown'
             logger.info(f"✅ Document converted successfully! Pages: {page_count}")
+
+            # Debug: Check document content
+            logger.info("🔍 Checking document content...")
+            try:
+                # Try to get text from document
+                doc_text = result.document.export_to_markdown()
+                text_length = len(doc_text)
+                logger.info(f"📊 Document text length: {text_length} characters")
+                if text_length > 0:
+                    preview = doc_text[:200].replace('\n', ' ')
+                    logger.info(f"📄 Text preview: {preview}...")
+                else:
+                    logger.warning("⚠️  Document appears to have no text content!")
+            except Exception as e:
+                logger.warning(f"⚠️  Could not preview document content: {e}")
 
             # Export to markdown with images
             markdown_path = output_dir / "document.md"

@@ -13,6 +13,7 @@ from config import settings
 from models import TaskResponse, TaskStatusResponse, TaskStatus
 from services.storage import storage_manager
 from services.document_processor import processor
+from version import __version__, __build__
 
 # Configure logging
 logging.basicConfig(
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
-    # Startup: Start background cleanup task
+    # Startup: Log version and start background cleanup task
+    logger.info(f"=== Docling OCR Server v{__version__} (build: {__build__}) ===")
     cleanup_task = asyncio.create_task(storage_manager.start_cleanup_task())
     logger.info("Started storage cleanup background task")
 
@@ -43,7 +45,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Docling OCR Server",
     description="Document processing server with Docling and Tesseract OCR",
-    version="1.0.0",
+    version=__version__,
     lifespan=lifespan
 )
 
@@ -206,7 +208,8 @@ async def root():
     """Root endpoint"""
     return {
         "service": "Docling OCR Server",
-        "version": "1.0.0",
+        "version": __version__,
+        "build": __build__,
         "status": "running"
     }
 

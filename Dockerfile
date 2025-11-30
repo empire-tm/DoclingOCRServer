@@ -1,5 +1,10 @@
 FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
 
+# Version arguments
+ARG VERSION=dev
+ARG BUILD_DATE
+ARG VCS_REF
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install python, pip, system libs, tesseract, poppler, libreoffice
@@ -33,8 +38,19 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Update version.py with build arguments
+RUN sed -i "s/__version__ = \".*\"/__version__ = \"${VERSION}\"/" version.py && \
+    sed -i "s/__build__ = \".*\"/__build__ = \"${VCS_REF:-unknown}\"/" version.py
+
 # Create directory for temporary storage
 RUN mkdir -p /tmp/docling_storage
+
+# Add labels
+LABEL org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.title="Docling OCR Server" \
+      org.opencontainers.image.description="Document processing server with Docling and Tesseract OCR"
 
 # Expose port
 EXPOSE 8000

@@ -300,22 +300,44 @@ if [ "$STATUS" = "completed" ]; then
 fi
 ```
 
-## GitHub Actions
+## Версионирование
 
-При пуше в `main` ветку или создании тега автоматически:
-1. Собирается Docker образ
-2. Публикуется в GitHub Container Registry
+Проект использует семантическое версионирование (SemVer). Подробную информацию см. в [VERSIONING.md](VERSIONING.md).
 
 ### Использование опубликованного образа
 
 ```bash
-docker pull ghcr.io/<your-username>/doclingocrserver:latest
+# Использование конкретной версии (рекомендуется для продакшена)
+docker pull ghcr.io/empire-tm/doclingocrserver:1.0.0
+
+# Или использование latest
+docker pull ghcr.io/empire-tm/doclingocrserver:latest
 
 docker run -d \
   -p 8000:8000 \
   -v $(pwd)/temp_storage:/tmp/docling_storage \
-  ghcr.io/<your-username>/doclingocrserver:latest
+  ghcr.io/empire-tm/doclingocrserver:1.0.0
 ```
+
+### Создание новой версии
+
+```bash
+# Использование скрипта для обновления версии
+./bump_version.sh 1.2.3
+
+# Или вручную:
+# 1. Обновите версию в version.py
+# 2. Создайте тег: git tag v1.2.3
+# 3. Отправьте тег: git push origin v1.2.3
+```
+
+GitHub Actions автоматически соберет и опубликует Docker образ с правильной версией.
+
+## GitHub Actions
+
+При пуше в `main` ветку или создании тега автоматически:
+1. Собирается Docker образ с версией из тега или commit SHA
+2. Публикуется в GitHub Container Registry с соответствующими тегами
 
 ## Архитектура
 

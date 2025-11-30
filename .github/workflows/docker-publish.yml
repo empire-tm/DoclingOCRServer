@@ -51,6 +51,19 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Prepare version
+        id: version
+        run: |
+          # Extract version from tag or use commit SHA
+          if [[ "${{ github.ref }}" =~ ^refs/tags/v(.*)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            VERSION="${{ github.sha }}"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "VCS_REF=${{ github.sha }}" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -58,6 +71,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.VERSION }}
+            BUILD_DATE=${{ steps.version.outputs.BUILD_DATE }}
+            VCS_REF=${{ steps.version.outputs.VCS_REF }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64

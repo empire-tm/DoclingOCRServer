@@ -1,7 +1,10 @@
 services:
   docling-ocr-server:
+    # Для локальной разработки - собирает из исходников
     build:
       dockerfile: Dockerfile.cpu
+    # Для продакшена - используйте конкретную версию:
+    # image: ghcr.io/empire-tm/doclingocrserver:1.0.0-cpu
     ports:
       - "8000:8000"
     volumes:

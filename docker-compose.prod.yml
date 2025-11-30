@@ -1,9 +1,7 @@
 services:
   docling-ocr-server:
-    # Для локальной разработки - собирает из исходников
-    build: .
-    # Для продакшена - используйте конкретную версию:
-    # image: ghcr.io/empire-tm/doclingocrserver:1.0.0
+    # Продакшен версия - использует опубликованный образ с конкретной версией
+    image: ghcr.io/empire-tm/doclingocrserver:1.0.0
     ports:
       - "8000:8000"
     volumes:

@@ -6,3 +6,4 @@ pydantic>=2.9.2
 pydantic-settings>=2.5.2
 aiofiles>=24.1.0
 python-dotenv>=1.0.1
+fastapi-standalone-docs>=0.2.0

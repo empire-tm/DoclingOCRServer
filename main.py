@@ -14,6 +14,7 @@ from models import TaskResponse, TaskStatusResponse, TaskStatus
 from services.storage import storage_manager
 from services.document_processor import processor
 from version import __version__, __build__
+from fastapi_standalone_docs import StandaloneDocs
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +49,7 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan
 )
+StandaloneDocs(app=app)
 
 
 async def process_document_task(task_id: str, file_path: Path, force_ocr: bool = False):

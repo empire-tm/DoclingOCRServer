@@ -47,7 +47,8 @@ app = FastAPI(
     title="Docling OCR Server",
     description="Document processing server with Docling and Tesseract OCR",
     version=__version__,
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/swagger",
 )
 StandaloneDocs(app=app)
 

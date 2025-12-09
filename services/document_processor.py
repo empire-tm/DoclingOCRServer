@@ -190,19 +190,17 @@ class DocumentProcessor:
             raise
 
     async def process_document(
-        self,
-        file_path: Path,
-        output_dir: Path,
-        force_ocr: bool = False
+            self,
+            file_path: Path,
+            output_dir: Path,
+            force_ocr: bool = False
     ) -> tuple[Path, Path]:
         """
         Process document and return paths to markdown and images directory
-
         Args:
             file_path: Path to input document
             output_dir: Directory for output files
             force_ocr: If True, forces OCR on entire page/document
-
         Returns:
             Tuple of (markdown_path, images_dir_path)
         """
@@ -219,6 +217,11 @@ class DocumentProcessor:
             elif file_suffix == ".xls":
                 converted_file = await self._convert_legacy_office_format(file_path, "xlsx")
                 file_path = converted_file
+
+            # For PDF files, always use force_ocr to ensure text extraction
+            if file_suffix == ".pdf":
+                logger.info("📄 PDF detected - enabling OCR for text extraction")
+                force_ocr = True
 
             if force_ocr:
                 logger.info("🔍 Force OCR enabled for this document")
@@ -244,11 +247,26 @@ class DocumentProcessor:
                 doc_text = result.document.export_to_markdown()
                 text_length = len(doc_text)
                 logger.info(f"📊 Document text length: {text_length} characters")
+
                 if text_length > 0:
                     preview = doc_text[:200].replace('\n', ' ')
                     logger.info(f"📄 Text preview: {preview}...")
+
+                    # Count image references vs actual text
+                    image_refs = doc_text.count('![')
+                    text_without_refs = re.sub(r'!\[.*?\]\(.*?\)', '', doc_text).strip()
+                    actual_text_length = len(text_without_refs)
+
+                    logger.info(f"📊 Image references found: {image_refs}")
+                    logger.info(f"📊 Actual text (excluding images): {actual_text_length} characters")
+
+                    # If document is mostly images with no text, warn user
+                    if image_refs > 0 and actual_text_length < 100:
+                        logger.warning("⚠️  Document contains mostly images with little text!")
+                        logger.warning("⚠️  OCR may not have extracted text properly")
                 else:
                     logger.warning("⚠️  Document appears to have no text content!")
+
             except Exception as e:
                 logger.warning(f"⚠️  Could not preview document content: {e}")
 
@@ -257,22 +275,18 @@ class DocumentProcessor:
             images_dir = output_dir / "images"
 
             # Export markdown with images using save_as_markdown with ImageRefMode.REFERENCED
-            # This will create document_artifacts folder by default
             logger.info("📝 Exporting to Markdown format with images...")
-
             await asyncio.to_thread(
                 result.document.save_as_markdown,
                 str(markdown_path),
                 image_mode=ImageRefMode.REFERENCED
             )
-
             logger.info(f"💾 Markdown saved: {markdown_path.name}")
 
             # Rename document_artifacts to images and fix paths in markdown
             artifacts_dir = output_dir / "document_artifacts"
             if artifacts_dir.exists():
                 logger.info("🔄 Renaming document_artifacts to images...")
-
                 # Create images directory if it doesn't exist
                 images_dir.mkdir(exist_ok=True)
 
@@ -329,6 +343,17 @@ class DocumentProcessor:
                 logger.info(f"🖼️  Total images extracted: {image_count}")
             else:
                 logger.info("ℹ️  No images found in document")
+
+            # Final validation
+            markdown_content = markdown_path.read_text(encoding="utf-8")
+            text_without_images = re.sub(r'!\[.*?\]\(.*?\)', '', markdown_content).strip()
+
+            if len(text_without_images) < 50 and image_count > 0:
+                logger.warning("⚠️  ATTENTION: Document converted to images only!")
+                logger.warning("⚠️  Very little text was extracted. This might indicate:")
+                logger.warning("    - PDF contains scanned images without embedded text")
+                logger.warning("    - OCR quality is poor")
+                logger.warning("    - Document is image-based")
 
             logger.info(f"✨ Document processing completed successfully!")
             return markdown_path, images_dir

@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from typing import Optional
 
 from config import settings
-from models import TaskResponse, TaskStatusResponse, TaskStatus
+from models import TaskResponse, TaskStatusResponse, TaskStatus, TableFormat
 from services.storage import storage_manager
 from services.document_processor import processor
 from version import __version__, __build__
@@ -53,7 +53,7 @@ app = FastAPI(
 StandaloneDocs(app=app)
 
 
-async def process_document_task(task_id: str, file_path: Path, force_ocr: bool = False):
+async def process_document_task(task_id: str, file_path: Path, force_ocr: bool = False, table_format: TableFormat = TableFormat.AUTO):
     """Background task to process document"""
     try:
         logger.info(f"Processing task {task_id}")
@@ -63,7 +63,7 @@ async def process_document_task(task_id: str, file_path: Path, force_ocr: bool =
         task_dir = storage_manager.get_task_path(task_id)
 
         # Process document
-        await processor.process_document(file_path, task_dir, force_ocr=force_ocr)
+        await processor.process_document(file_path, task_dir, force_ocr=force_ocr, table_format=table_format.value)
 
         # Create ZIP archive
         zip_path = storage_manager.get_zip_path(task_id)
@@ -100,7 +100,8 @@ async def process_document_task(task_id: str, file_path: Path, force_ocr: bool =
 async def process_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    force_ocr: bool = Form(False)
+    force_ocr: bool = Form(False),
+    table_format: TableFormat = Form(TableFormat.AUTO)
 ):
     """
     Upload a document for processing
@@ -111,6 +112,10 @@ async def process_document(
     - file: Document file to process
     - force_ocr: Force OCR on entire page/document (default: false)
       Use this for scanned documents or when standard processing misses content
+    - table_format: Table export format (default: auto)
+      - "markdown": Export all tables as Markdown (simple format, may lose complex structure)
+      - "html": Export all tables as HTML (preserves complex structure, merged cells)
+      - "auto": Automatically choose format based on table complexity (recommended)
 
     Returns task_id for tracking the processing status
     """
@@ -150,12 +155,13 @@ async def process_document(
         logger.error(f"Error saving uploaded file: {e}")
         raise HTTPException(status_code=500, detail="Error saving uploaded file")
 
-    # Add background task with force_ocr parameter
-    background_tasks.add_task(process_document_task, task_id, temp_file, force_ocr)
+    # Add background task with force_ocr and table_format parameters
+    background_tasks.add_task(process_document_task, task_id, temp_file, force_ocr, table_format)
 
     message = "Document processing started"
     if force_ocr:
         message += " (with force OCR)"
+    message += f" - table format: {table_format.value}"
 
     return TaskResponse(
         task_id=task_id,

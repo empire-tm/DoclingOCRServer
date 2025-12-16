@@ -189,11 +189,127 @@ class DocumentProcessor:
             logger.error(f"Error converting legacy Office format: {e}")
             raise
 
+    def _is_table_complex(self, table) -> bool:
+        """
+        Analyze table complexity to decide if HTML is needed
+        Returns True if table is complex and should use HTML
+        """
+        try:
+            # Check if table has grid structure (indicates merged cells)
+            if hasattr(table, 'data') and hasattr(table.data, 'grid'):
+                grid = table.data.grid
+
+                # Count rows and columns
+                num_rows = len(grid)
+                if num_rows == 0:
+                    return False
+
+                num_cols = len(grid[0]) if grid else 0
+
+                # Large tables are better in HTML
+                if num_rows > 10 or num_cols > 6:
+                    logger.info(f"  → Complex: Large table ({num_rows}x{num_cols})")
+                    return True
+
+                # Check for merged cells (cells with rowspan/colspan)
+                for row in grid:
+                    for cell in row:
+                        if hasattr(cell, 'row_span') and cell.row_span > 1:
+                            logger.info("  → Complex: Found row span")
+                            return True
+                        if hasattr(cell, 'col_span') and cell.col_span > 1:
+                            logger.info("  → Complex: Found col span")
+                            return True
+                        if hasattr(cell, 'rowspan') and cell.rowspan > 1:
+                            logger.info("  → Complex: Found rowspan")
+                            return True
+                        if hasattr(cell, 'colspan') and cell.colspan > 1:
+                            logger.info("  → Complex: Found colspan")
+                            return True
+
+            # If we can't determine, default to simple
+            return False
+
+        except Exception as e:
+            logger.warning(f"  ⚠️  Could not analyze table complexity: {e}")
+            return False
+
+    async def _convert_tables_to_html(self, markdown_content: str, result, table_format: str) -> str:
+        """
+        Convert tables in markdown to HTML format based on complexity or user preference
+
+        Args:
+            markdown_content: Original markdown content
+            result: Docling conversion result with document
+            table_format: "markdown", "html", or "auto"
+
+        Returns:
+            Markdown content with tables replaced by HTML where appropriate
+        """
+        try:
+            if not hasattr(result.document, 'tables') or not result.document.tables:
+                logger.info("ℹ️  No tables found in document")
+                return markdown_content
+
+            tables = list(result.document.tables)
+            logger.info(f"📊 Processing {len(tables)} table(s) with format: {table_format}")
+
+            # Process each table
+            for table_idx, table in enumerate(tables):
+                # Decide if we should use HTML for this table
+                use_html = False
+
+                if table_format == "html":
+                    use_html = True
+                    logger.info(f"  📋 Table {table_idx + 1}: HTML (forced by user)")
+                elif table_format == "auto":
+                    use_html = self._is_table_complex(table)
+                    if use_html:
+                        logger.info(f"  📋 Table {table_idx + 1}: HTML (complex table detected)")
+                    else:
+                        logger.info(f"  📋 Table {table_idx + 1}: Markdown (simple table)")
+                else:  # markdown
+                    logger.info(f"  📋 Table {table_idx + 1}: Markdown (forced by user)")
+
+                # If we need HTML, export table and replace in markdown
+                if use_html:
+                    try:
+                        # Export table to HTML
+                        html_table = await asyncio.to_thread(
+                            table.export_to_html,
+                            doc=result.document
+                        )
+
+                        # Get markdown representation of the table to find it
+                        md_table = await asyncio.to_thread(
+                            table.export_to_markdown,
+                            doc=result.document
+                        )
+
+                        # Replace markdown table with HTML table
+                        # Add newlines around HTML for better readability
+                        html_with_newlines = f"\n\n{html_table}\n\n"
+                        markdown_content = markdown_content.replace(md_table, html_with_newlines, 1)
+
+                        logger.info(f"    ✅ Converted to HTML")
+
+                    except Exception as e:
+                        logger.warning(f"    ⚠️  Could not convert table {table_idx + 1} to HTML: {e}")
+                        # Keep markdown version on error
+
+            return markdown_content
+
+        except Exception as e:
+            logger.error(f"❌ Error processing tables: {e}")
+            # Return original content on error
+            return markdown_content
+
     async def process_document(
             self,
             file_path: Path,
             output_dir: Path,
-            force_ocr: bool = False
+            force_ocr: bool = False,
+            table_format: str = "auto"
     ) -> tuple[Path, Path]:
         """
         Process document and return paths to markdown and images directory
@@ -201,6 +317,7 @@ class DocumentProcessor:
             file_path: Path to input document
             output_dir: Directory for output files
             force_ocr: If True, forces OCR on entire page/document
+            table_format: Format for tables - "markdown", "html", or "auto"
         Returns:
             Tuple of (markdown_path, images_dir_path)
         """
@@ -282,6 +399,14 @@ class DocumentProcessor:
                 image_mode=ImageRefMode.REFERENCED
             )
             logger.info(f"💾 Markdown saved: {markdown_path.name}")
+
+            # Apply hybrid table format (convert to HTML if needed)
+            if table_format != "markdown":
+                logger.info(f"🔄 Processing tables with format: {table_format}")
+                markdown_content = markdown_path.read_text(encoding="utf-8")
+                markdown_content = await self._convert_tables_to_html(markdown_content, result, table_format)
+                markdown_path.write_text(markdown_content, encoding="utf-8")
+                logger.info("✅ Table processing completed")
 
             # Rename document_artifacts to images and fix paths in markdown
             artifacts_dir = output_dir / "document_artifacts"

@@ -10,6 +10,13 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 
+class TableFormat(str, Enum):
+    """Table export format options"""
+    AUTO = "auto"
+    MARKDOWN = "markdown"
+    HTML = "html"
+
+
 class TaskResponse(BaseModel):
     task_id: str
     status: TaskStatus
